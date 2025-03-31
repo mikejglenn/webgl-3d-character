@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>3D Character Movement with WebGL</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            font-family: Arial, sans-serif;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+        canvas { 
+            display: block; 
+            touch-action: none;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            color: white;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+            z-index: 100;
+        }
+        @media (max-width: 600px) {
+            #info {
+                font-size: 12px;
+            }
+            #info h2 {
+                font-size: 16px;
+                margin: 5px 0;
+            }
+            #info p {
+                margin: 5px 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <h2>3D Character Movement</h2>
+        <p>Desktop: WASD or arrow keys to move, Spacebar to jump</p>
+        <p>Mobile: Virtual joystick to move, Tap jump button to jump</p>
+    </div>
+    
+    <div id="mobile-controls" style="display: none; position: absolute; bottom: 20px; width: 100%; z-index: 100;">
+        <div id="joystick-area" style="position: absolute; left: 30px; bottom: 30px; width: 120px; height: 120px; background-color: rgba(255, 255, 255, 0.3); border-radius: 50%;">
+            <div id="joystick" style="position: absolute; left: 35px; top: 35px; width: 50px; height: 50px; background-color: rgba(0, 0, 255, 0.5); border-radius: 50%;"></div>
+        </div>
+        <div id="jump-button" style="position: absolute; right: 30px; bottom: 30px; width: 80px; height: 80px; background-color: rgba(255, 0, 0, 0.5); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold;">JUMP</div>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Set up scene, camera and renderer
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x101010); // Dark background for better grid visibility
+        
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 5, 10);
+        camera.lookAt(0, 0, 0);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+        
+        // Add lights
+        const ambientLight = new THREE.AmbientLight(0x404040);
+        scene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight.position.set(10, 20, 10);
+        directionalLight.castShadow = true;
+        directionalLight.shadow.camera.left = -50;
+        directionalLight.shadow.camera.right = 50;
+        directionalLight.shadow.camera.top = 50;
+        directionalLight.shadow.camera.bottom = -50;
+        scene.add(directionalLight);
+        
+        // Create a grid-based ground
+        const gridSize = 100;
+        const gridDivisions = 100;
+        
+        // Create ground geometry
+        const groundGeometry = new THREE.PlaneGeometry(gridSize, gridSize, gridDivisions, gridDivisions);
+        
+        // Create an additional grid using THREE.GridHelper for clearer grid lines
+        const gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x44ff44, 0x008800);
+        gridHelper.position.y = 0.02; // Slightly above the ground plane
+        scene.add(gridHelper);
+        
+        // Create grid material using wireframe
+        const gridMaterial = new THREE.MeshBasicMaterial({
+            color: 0x44ff44,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.5,
+            wireframeLinewidth: 1
+        });
+        
+        // Create solid ground material
+        const groundMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0x111111, 
+            roughness: 0.8,
+            metalness: 0.2,
+            transparent: true,
+            opacity: 0.2
+        });
+        
+        // Create ground mesh with grid
+        const groundGrid = new THREE.Mesh(groundGeometry, gridMaterial);
+        groundGrid.rotation.x = -Math.PI / 2; // Rotate to be horizontal
+        groundGrid.receiveShadow = true;
+        scene.add(groundGrid);
+        
+        // Add solid ground below grid
+        const solidGround = new THREE.Mesh(new THREE.PlaneGeometry(gridSize, gridSize), groundMaterial);
+        solidGround.rotation.x = -Math.PI / 2;
+        solidGround.position.y = -0.01; // Slightly below grid to avoid z-fighting
+        solidGround.receiveShadow = true;
+        scene.add(solidGround);
+        
+        // Create a simple character (cube for now)
+        const characterGeometry = new THREE.BoxGeometry(1, 2, 1);
+        const characterMaterial = new THREE.MeshStandardMaterial({ color: 0x3366ff });
+        const character = new THREE.Mesh(characterGeometry, characterMaterial);
+        character.position.set(0, 1, 0); // Position it above the ground
+        character.castShadow = true;
+        scene.add(character);
+        
+        // Create a head for our character
+        const headGeometry = new THREE.SphereGeometry(0.5, 16, 16);
+        const headMaterial = new THREE.MeshStandardMaterial({ color: 0xffe0bd });
+        const head = new THREE.Mesh(headGeometry, headMaterial);
+        head.position.y = 1;
+        head.castShadow = true;
+        character.add(head);
+        
+        // Add arms
+        const armGeometry = new THREE.BoxGeometry(0.3, 1, 0.3);
+        const armMaterial = new THREE.MeshStandardMaterial({ color: 0x3366ff });
+        
+        const leftArm = new THREE.Mesh(armGeometry, armMaterial);
+        leftArm.position.set(-0.65, 0, 0);
+        leftArm.castShadow = true;
+        character.add(leftArm);
+        
+        const rightArm = new THREE.Mesh(armGeometry, armMaterial);
+        rightArm.position.set(0.65, 0, 0);
+        rightArm.castShadow = true;
+        character.add(rightArm);
+        
+        // Add legs
+        const legGeometry = new THREE.BoxGeometry(0.3, 1, 0.3);
+        const legMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+        
+        const leftLeg = new THREE.Mesh(legGeometry, legMaterial);
+        leftLeg.position.set(-0.3, -1, 0);
+        leftLeg.castShadow = true;
+        character.add(leftLeg);
+        
+        const rightLeg = new THREE.Mesh(legGeometry, legMaterial);
+        rightLeg.position.set(0.3, -1, 0);
+        rightLeg.castShadow = true;
+        character.add(rightLeg);
+        
+        // Movement variables
+        const moveSpeed = 0.1;
+        const jumpForce = 0.15;
+        const gravity = 0.01;
+        let velocity = { x: 0, y: 0, z: 0 };
+        let isJumping = false;
+        
+        // Input tracking
+        const keys = {};
+        let isMobile = false;
+        let joystickActive = false;
+        let joystickData = { x: 0, y: 0 };
+        
+        // Detect mobile device
+        function detectMobile() {
+            return (
+                navigator.userAgent.match(/Android/i) ||
+                navigator.userAgent.match(/webOS/i) ||
+                navigator.userAgent.match(/iPhone/i) ||
+                navigator.userAgent.match(/iPad/i) ||
+                navigator.userAgent.match(/iPod/i) ||
+                navigator.userAgent.match(/BlackBerry/i) ||
+                navigator.userAgent.match(/Windows Phone/i) ||
+                window.innerWidth <= 800
+            );
+        }
+        
+        // Initialize mobile controls if on mobile device
+        function initMobileControls() {
+            isMobile = detectMobile();
+            if (isMobile) {
+                document.getElementById('mobile-controls').style.display = 'block';
+                setupTouchControls();
+            }
+        }
+        
+        // Setup touch controls for mobile
+        function setupTouchControls() {
+            const joystickArea = document.getElementById('joystick-area');
+            const joystick = document.getElementById('joystick');
+            const jumpButton = document.getElementById('jump-button');
+            
+            const joystickAreaRect = joystickArea.getBoundingClientRect();
+            const centerX = joystickAreaRect.width / 2;
+            const centerY = joystickAreaRect.height / 2;
+            
+            // Joystick touch events
+            joystickArea.addEventListener('touchstart', handleJoystickStart);
+            joystickArea.addEventListener('touchmove', handleJoystickMove);
+            joystickArea.addEventListener('touchend', handleJoystickEnd);
+            
+            // Jump button touch event
+            jumpButton.addEventListener('touchstart', () => {
+                keys[' '] = true;
+                setTimeout(() => { keys[' '] = false; }, 100);
+            });
+            
+            function handleJoystickStart(e) {
+                e.preventDefault();
+                joystickActive = true;
+                handleJoystickMove(e);
+            }
+            
+            function handleJoystickMove(e) {
+                e.preventDefault();
+                if (!joystickActive) return;
+                
+                const touch = e.touches[0];
+                const rect = joystickArea.getBoundingClientRect();
+                
+                // Calculate touch position relative to joystick area center
+                let x = touch.clientX - rect.left - centerX;
+                let y = touch.clientY - rect.top - centerY;
+                
+                // Normalize joystick position
+                const distance = Math.sqrt(x * x + y * y);
+                const maxDistance = joystickAreaRect.width / 2 - joystick.offsetWidth / 2;
+                
+                if (distance > maxDistance) {
+                    const scale = maxDistance / distance;
+                    x *= scale;
+                    y *= scale;
+                }
+                
+                // Update joystick position
+                joystick.style.left = `${centerX + x - joystick.offsetWidth / 2}px`;
+                joystick.style.top = `${centerY + y - joystick.offsetHeight / 2}px`;
+                
+                // Update joystick data for movement
+                joystickData.x = x / maxDistance; // -1 to 1
+                joystickData.y = y / maxDistance; // -1 to 1
+            }
+            
+            function handleJoystickEnd(e) {
+                e.preventDefault();
+                joystickActive = false;
+                
+                // Reset joystick position
+                joystick.style.left = `${centerX - joystick.offsetWidth / 2}px`;
+                joystick.style.top = `${centerY - joystick.offsetHeight / 2}px`;
+                
+                // Reset joystick data
+                joystickData.x = 0;
+                joystickData.y = 0;
+            }
+        }
+        
+        // Event listeners for keyboard input
+        document.addEventListener('keydown', (event) => {
+            keys[event.key.toLowerCase()] = true;
+        });
+        
+        document.addEventListener('keyup', (event) => {
+            keys[event.key.toLowerCase()] = false;
+        });
+        
+        // Initialize mobile controls on page load
+        window.addEventListener('load', initMobileControls);
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            
+            // Re-check if mobile layout should be used
+            const wasMobile = isMobile;
+            isMobile = detectMobile();
+            
+            // Toggle mobile controls visibility
+            if (isMobile !== wasMobile) {
+                document.getElementById('mobile-controls').style.display = isMobile ? 'block' : 'none';
+                if (isMobile) {
+                    setupTouchControls();
+                }
+            }
+        });
+        
+        // Movement handler
+        function handleMovement() {
+            // Handle keyboard or mobile joystick input
+            if (isMobile && joystickActive) {
+                // Mobile joystick controls
+                velocity.x = joystickData.x * moveSpeed;
+                velocity.z = joystickData.y * moveSpeed;
+            } else {
+                // Keyboard controls
+                // Forward/backward movement
+                if (keys['w'] || keys['arrowup']) {
+                    velocity.z = -moveSpeed;
+                } else if (keys['s'] || keys['arrowdown']) {
+                    velocity.z = moveSpeed;
+                } else if (!isMobile) {
+                    velocity.z = 0;
+                }
+                
+                // Left/right movement
+                if (keys['a'] || keys['arrowleft']) {
+                    velocity.x = -moveSpeed;
+                } else if (keys['d'] || keys['arrowright']) {
+                    velocity.x = moveSpeed;
+                } else if (!isMobile) {
+                    velocity.x = 0;
+                }
+            }
+            
+            // Jump
+            if ((keys[' '] || keys['spacebar']) && !isJumping) {
+                velocity.y = jumpForce;
+                isJumping = true;
+            }
+            
+            // Apply gravity and check for ground collision
+            velocity.y -= gravity;
+            character.position.y += velocity.y;
+            
+            // Ground collision detection
+            if (character.position.y <= 1) {
+                character.position.y = 1;
+                velocity.y = 0;
+                isJumping = false;
+            }
+            
+            // Apply horizontal movement
+            character.position.x += velocity.x;
+            character.position.z += velocity.z;
+            
+            // Animate limbs based on movement
+            if (velocity.x !== 0 || velocity.z !== 0) {
+                const walkSpeed = 10;
+                const walkAmplitude = 0.3;
+                const time = performance.now() * 0.01;
+                
+                // Swing arms and legs
+                leftArm.rotation.x = Math.sin(time * walkSpeed) * walkAmplitude;
+                rightArm.rotation.x = -Math.sin(time * walkSpeed) * walkAmplitude;
+                leftLeg.rotation.x = -Math.sin(time * walkSpeed) * walkAmplitude;
+                rightLeg.rotation.x = Math.sin(time * walkSpeed) * walkAmplitude;
+            } else {
+                // Reset limb positions when not moving
+                leftArm.rotation.x = 0;
+                rightArm.rotation.x = 0;
+                leftLeg.rotation.x = 0;
+                rightLeg.rotation.x = 0;
+            }
+            
+            // Character direction facing
+            if (velocity.x !== 0 || velocity.z !== 0) {
+                const angle = Math.atan2(velocity.x, velocity.z);
+                character.rotation.y = angle;
+            }
+        }
+        
+        // Update camera position to follow character
+        function updateCamera() {
+            const offset = new THREE.Vector3(0, 5, 10);
+            camera.position.copy(character.position).add(offset);
+            camera.lookAt(character.position);
+        }
+        
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            handleMovement();
+            updateCamera();
+            
+            renderer.render(scene, camera);
+        }
+        
+        animate();
+    </script>
+</body>
+</html>
